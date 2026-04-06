@@ -1,0 +1,46 @@
+# Core frameworks
+fastapi==0.115.6
+uvicorn[standard]==0.34.0
+celery[redis]==5.4.0
+redis==5.2.1
+
+# Database
+sqlalchemy==2.0.36
+alembic==1.14.1
+asyncpg==0.30.0
+greenlet==3.1.1
+
+# Supabase
+supabase==2.10.0
+
+# OpenAI
+openai==1.57.4
+
+# HTTP clients
+httpx==0.28.1
+
+# File uploads
+python-multipart==0.0.18
+
+# Audio / Video
+ffmpeg-python==0.2.0
+librosa==0.10.2.post1
+numpy==1.26.4
+
+# Environment & settings
+python-dotenv==1.0.1
+pydantic-settings==2.7.1
+
+# YouTube
+yt-dlp==2024.12.23
+
+# Payments
+stripe==11.3.0
+
+# Cloud storage
+boto3==1.35.90
+
+# Testing
+pytest==8.3.4
+pytest-asyncio==0.25.0
+pytest-mock==3.14.0
