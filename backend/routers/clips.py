@@ -86,9 +86,8 @@ async def get_clip(clip_id: str, db: AsyncSession = Depends(get_db)):
 
 @router.get("/{clip_id}/download")
 async def download_clip(clip_id: str, db: AsyncSession = Depends(get_db)):
-    from fastapi.responses import RedirectResponse
-    import os, boto3
-    from botocore.config import Config
+    from fastapi.responses import FileResponse
+    import os
 
     stmt = select(Clip).where(Clip.id == clip_id)
     result = await db.execute(stmt)
@@ -96,23 +95,26 @@ async def download_clip(clip_id: str, db: AsyncSession = Depends(get_db)):
     if not clip or not clip.storage_url:
         raise HTTPException(status_code=404, detail="Clip or storage URL not found")
 
-    try:
-        s3 = boto3.client(
-            "s3",
-            endpoint_url=f"https://{os.getenv('CLOUDFLARE_R2_ACCOUNT_ID')}.r2.cloudflarestorage.com",
-            aws_access_key_id=os.getenv("CLOUDFLARE_R2_ACCESS_KEY_ID", ""),
-            aws_secret_access_key=os.getenv("CLOUDFLARE_R2_SECRET_ACCESS_KEY", ""),
-            config=Config(signature_version="s3v4"),
+    # Resolve the local file path
+    file_path = clip.storage_url
+    if os.path.isfile(file_path):
+        return FileResponse(
+            path=file_path,
+            media_type="video/mp4",
+            filename=f"{clip_id}.mp4",
         )
-        key = clip.storage_url.split("/")[-1] if "/" in clip.storage_url else clip.storage_url
-        url = s3.generate_presigned_url(
-            "get_object",
-            Params={"Bucket": os.getenv("CLOUDFLARE_R2_BUCKET_NAME", ""), "Key": key},
-            ExpiresIn=3600,
+
+    # Fallback: try local_storage manager by clip_id
+    from backend.services.local_storage import get_clip_path
+    fallback_path = get_clip_path(clip_id)
+    if fallback_path and os.path.isfile(fallback_path):
+        return FileResponse(
+            path=fallback_path,
+            media_type="video/mp4",
+            filename=f"{clip_id}.mp4",
         )
-        return RedirectResponse(url)
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+
+    raise HTTPException(status_code=404, detail="Clip file not found on disk")
 
 
 @router.delete("/{clip_id}", status_code=204)

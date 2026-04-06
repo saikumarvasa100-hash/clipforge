@@ -1,50 +1,55 @@
-# Core frameworks
-fastapi==0.115.6
-uvicorn[standard]==0.34.0
-celery[redis]==5.4.0
-redis==5.2.1
+# =============================================================
+# ClipForge -- Requirements (100% FREE, zero paid APIs)
+# =============================================================
 
-# Database
-sqlalchemy==2.0.36
-alembic==1.14.1
-asyncpg==0.30.0
-greenlet==3.1.1
+# Core framework
+fastapi>=0.110.0
+uvicorn[standard]>=0.27.0
 
-# Supabase
-supabase==2.10.0
+# Task queue
+celery[redis]>=5.3.0
+redis>=5.0.0
 
-# OpenAI
-openai>=1.0.0
-opencv-python-headless
-librosa
-scipy
-numpy
+# Database (local SQLite -- no cloud dependency)
+sqlalchemy>=2.0.0
+aiosqlite>=0.19.0
+alembic>=1.13.0
+greenlet>=3.0.0
 
-# HTTP clients
-httpx==0.28.1
+# Local Auth (replaces Supabase)
+passlib[bcrypt]>=1.7.4
+python-jose[cryptography]>=3.3.0
+python-multipart>=0.0.6
 
-# File uploads
-python-multipart==0.0.18
+# Environment
+python-dotenv>=1.0.0
+pydantic-settings>=2.0.0
+
+# AI (local Whisper + HERMES bridge to free OpenRouter models)
+faster-whisper>=1.0.0
+# OpenRouter free models via HERMES agent (already installed at :7890)
 
 # Audio / Video
-ffmpeg-python==0.2.0
-librosa==0.10.2.post1
-numpy==1.26.4
+ffmpeg-python>=0.2.0
+librosa>=0.10.0
+scipy>=1.12.0
+numpy>=1.26.0
+opencv-python-headless>=4.9.0
 
-# Environment & settings
-python-dotenv==1.0.1
-pydantic-settings==2.7.1
+# YouTube / Video download
+yt-dlp>=2024.1.0
 
-# YouTube
-yt-dlp==2024.12.23
+# Browser automation for publishing (replaces TikTok/FB/LinkedIn APIs)
+playwright>=1.40.0
+# NOTE: Run 'playwright install chromium' after pip install
 
-# Payments
-stripe==11.3.0
+# Storage (local filesystem, no boto3/R2 needed)
+# boto3 removed -- using local_storage.py
 
-# Cloud storage
-boto3==1.35.90
+# HTTP
+httpx>=0.27.0
 
 # Testing
-pytest==8.3.4
-pytest-asyncio==0.25.0
-pytest-mock==3.14.0
+pytest>=8.0.0
+pytest-asyncio>=0.23.0
+pytest-mock>=3.12.0

@@ -38,13 +38,12 @@ services:
     environment:
       DATABASE_URL: postgresql+asyncpg://clipforge:clipforge_local@postgres:5432/clipforge
       REDIS_URL: redis://redis:6379/0
-    depends_on:
-      postgres:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
+      LOCAL_STORAGE_PATH: /home/clipforge/storage
     volumes:
-      - video_storage:/tmp/clipforge
+      - video_storage:/home/clipforge/storage
+    depends_on:
+      - redis
+      - postgres
     restart: unless-stopped
 
   celery-worker:
@@ -54,23 +53,27 @@ services:
     environment:
       DATABASE_URL: postgresql+asyncpg://clipforge:clipforge_local@postgres:5432/clipforge
       REDIS_URL: redis://redis:6379/0
-    depends_on:
-      - postgres
-      - redis
+      LOCAL_STORAGE_PATH: /home/clipforge/storage
     volumes:
-      - video_storage:/tmp/clipforge
+      - video_storage:/home/clipforge/storage
+    depends_on:
+      - redis
+      - postgres
     restart: unless-stopped
 
   celery-beat:
     build:
       context: ./backend
       dockerfile: Dockerfile.worker
-    command: celery -A celery_app beat --loglevel=info
     environment:
       DATABASE_URL: postgresql+asyncpg://clipforge:clipforge_local@postgres:5432/clipforge
       REDIS_URL: redis://redis:6379/0
+      LOCAL_STORAGE_PATH: /home/clipforge/storage
+    volumes:
+      - video_storage:/home/clipforge/storage
     depends_on:
       - redis
+      - postgres
     restart: unless-stopped
 
   nginx:
@@ -81,6 +84,7 @@ services:
     volumes:
       - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
       - nginx_certs:/etc/nginx/certs
+      - video_storage:/home/clipforge/storage:ro
     depends_on:
       - fastapi-backend
     restart: unless-stopped

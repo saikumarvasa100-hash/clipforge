@@ -1,145 +1,68 @@
 """
 ClipForge -- Publisher Service
-TikTok Content Posting API v2, YouTube Shorts, Instagram Reels upload.
+TikTok, YouTube Shorts, Instagram Reels upload.
+API uploads for YouTube (official APIs); Playwright browser automation
+for TikTok and Instagram (replaces fragile OAuth flows).
 """
 from __future__ import annotations
 
-import asyncio
 import logging
 import os
-import time
-from typing import Dict, Optional
-
-import httpx
+from typing import Optional
 
 log = logging.getLogger("clipforge.publisher")
 
-# ── TikTok ────────────────────────────────────────────────────────────
+# ── Platform Cookie-file helpers ──────────────────────────────────────
+def _cookies(platform: str) -> str:
+    """Resolve the cookies JSON path for a platform from env vars.
+    Env vars: TIKTOK_COOKIES_FILE, INSTAGRAM_COOKIES_FILE, ...
+    """
+    var = f"{platform.upper()}_COOKIES_FILE"
+    path = os.getenv(var)
+    if not path:
+        raise FileNotFoundError(
+            f"Browser auth required: set {var} to a cookies JSON file"
+        )
+    if not os.path.exists(path):
+        raise FileNotFoundError(f"{var} file not found: {path}")
+    return path
 
-TIKTOK_BASE = "https://open.tiktokapis.com/v2/post/publish"
-TIKTOK_TOKEN_URL = "https://open.tiktokapis.com/v2/oauth/token"
-TIKTOK_CHUNK_SIZE = 10 * 1024 * 1024  # 10 MB per chunk
 
-TIKTOK_POLL_MAX_ATTEMPTS = 200
-TIKTOK_POLL_INTERVAL = 3  # seconds
-
+# ── TikTok (Playwright browser automation) ───────────────────────────
 
 async def tiktok_upload(clip: dict, access_token: str) -> str:
     """
-    Upload a video to TikTok via the Content Posting API v2.
-    Returns the published post_id.
+    Upload a video to TikTok via Playwright browser automation.
+    Requires TIKTOK_COOKIES_FILE env var pointing to a cookies JSON file.
+    The access_token parameter is kept for backward compatibility (unused).
+    Returns a status string: 'published', 'pending', or raises on failure.
     """
-    file_path = clip.get("output_path", "")
-    if not os.path.exists(file_path):
-        raise FileNotFoundError(f"Clip file not found: {file_path}")
+    from backend.services.browser_publisher import publish_tiktok_browser
 
-    file_size = os.path.getsize(file_path)
-    total_chunks = (file_size + TIKTOK_CHUNK_SIZE - 1) // TIKTOK_CHUNK_SIZE
+    video_path = clip.get("output_path", "")
+    description = clip.get("hook_text", "Check out this clip")
+    cookies_file = _cookies("tiktok")
 
-    headers = {
-        "Authorization": f"Bearer {access_token}",
-        "Content-Type": "application/json; charset=UTF-8",
-    }
-
-    # ── Step 1: Init upload ──────────────────────────────────────────
-    init_url = f"{TIKTOK_BASE}/inbox/video/init/"
-    init_body = {
-        "post_info": {
-            "title": clip.get("hook_text", "Check out this clip")[:150],
-            "privacy_level": "PUBLIC_TO_EVERYONE",
-            "disable_duet": False,
-            "disable_comment": False,
-            "disable_stitch": False,
-            "video_cover_timestamp_ms": 1000,
-        },
-        "source_info": {
-            "source": "FILE_UPLOAD",
-            "video_size": file_size,
-            "chunk_size": TIKTOK_CHUNK_SIZE,
-            "total_chunk_count": total_chunks,
-        },
-    }
-
-    async with httpx.AsyncClient(timeout=60) as client:
-        resp = await client.post(init_url, headers=headers, json=init_body)
-        resp.raise_for_status()
-        init_data = resp.json()
-
-    publish_id = init_data["data"]["publish_id"]
-    upload_url = init_data["data"]["upload_url"]
-    log.info("TikTok upload init: publish_id=%s, upload_url=%s", publish_id, upload_url)
-
-    # ── Step 2: Chunked upload ───────────────────────────────────────
-    with open(file_path, "rb") as f:
-        for chunk_idx in range(total_chunks):
-            data = f.read(TIKTOK_CHUNK_SIZE)
-            content_range = (
-                f"bytes {chunk_idx * TIKTOK_CHUNK_SIZE}-"
-                f"{min((chunk_idx + 1) * TIKTOK_CHUNK_SIZE, file_size) - 1}/"
-                f"{file_size}"
-            )
-            up_headers = {
-                **headers,
-                "Content-Type": "video/mp4",
-                "Content-Range": content_range,
-            }
-            log.info(
-                "Uploading chunk %d/%d (range %s)",
-                chunk_idx + 1, total_chunks, content_range,
-            )
-            async with httpx.AsyncClient(timeout=120) as client:
-                await client.put(upload_url, headers=up_headers, content=data)
-
-    # ── Step 3: Poll for publish status ──────────────────────────────
-    status_url = f"{TIKTOK_BASE}/status/fetch/"
-    for attempt in range(TIKTOK_POLL_MAX_ATTEMPTS):
-        await asyncio.sleep(TIKTOK_POLL_INTERVAL)
-        async with httpx.AsyncClient(timeout=30) as client:
-            resp = await client.post(
-                status_url,
-                headers=headers,
-                json={"publish_id": publish_id},
-            )
-            resp.raise_for_status()
-            status_data = resp.json()
-
-        status = status_data.get("data", {}).get("status", "")
-        if status == "PUBLISH_COMPLETE":
-            post_id = (
-                status_data.get("data", {}).get("publicly_available_post_id", [None])[0]
-                or publish_id
-            )
-            log.info("TikTok publish complete: post_id=%s", post_id)
-            return str(post_id)
-
-        public_id = status_data.get("data", {}).get("publicly_available_post_id", [])
-        if public_id:
-            return str(public_id[0])
-
-    raise TimeoutError("TikTok publish did not complete within timeout")
+    log.info("TikTok: publishing via browser (cookies=%s)", cookies_file)
+    result = await publish_tiktok_browser(
+        video_path=video_path,
+        description=description,
+        cookies_file=cookies_file,
+    )
+    return result
 
 
 async def refresh_tiktok_token(refresh_token: str) -> dict:
-    """Refresh TikTok OAuth access token."""
-    client_key = os.getenv("TIKTOK_CLIENT_KEY", "")
-    client_secret = os.getenv("TIKTOK_CLIENT_SECRET", "")
-
-    async with httpx.AsyncClient(timeout=30) as client:
-        resp = await client.post(
-            TIKTOK_TOKEN_URL,
-            headers={"Content-Type": "application/x-www-form-urlencoded"},
-            data={
-                "client_key": client_key,
-                "client_secret": client_secret,
-                "grant_type": "refresh_token",
-                "refresh_token": refresh_token,
-            },
-        )
-        resp.raise_for_status()
-        return resp.json()
+    """Refresh TikTok OAuth access token.
+    Kept for backward compatibility — not used in browser auth mode.
+    """
+    raise NotImplementedError(
+        "Token refresh is not needed in browser auth mode. "
+        "Update your TIKTOK_COOKIES_FILE with fresh session cookies instead."
+    )
 
 
-# ── YouTube Shorts ────────────────────────────────────────────────────
+# ── YouTube Shorts (kept as-is; official API) ──────────────────────
 
 async def youtube_shorts_upload(clip: dict, credentials: dict) -> str:
     """Upload a short video to YouTube as a Shorts video."""
@@ -194,51 +117,25 @@ async def youtube_shorts_upload(clip: dict, credentials: dict) -> str:
     return video_id
 
 
-# ── Instagram Reels ───────────────────────────────────────────────────
-
-INSTAGRAM_GRAPH = "https://graph.facebook.com/v20.0"
-
+# ── Instagram Reels (Playwright browser automation) ───────────────────
 
 async def instagram_reels_upload(clip: dict, access_token: str, ig_user_id: str) -> str:
     """
-    Two-step Instagram Reels upload:
-    1. POST /{user-id}/media to create container
-    2. POST /{user-id}/media_publish to publish
+    Publish a video to Instagram as a Reel via Playwright browser automation.
+    Requires INSTAGRAM_COOKIES_FILE env var pointing to a cookies JSON file.
+    The access_token and ig_user_id params are kept for backward compat (unused).
+    Returns a status string: 'published'.
     """
-    file_path = clip.get("storage_url", clip.get("output_path", ""))
-    caption = clip.get("hook_text", "")[:2200]
+    from backend.services.browser_publisher import publish_instagram_browser
 
-    params = {"access_token": access_token}
+    video_path = clip.get("storage_url", clip.get("output_path", ""))
+    caption = clip.get("hook_text", "")[:]
+    cookies_file = _cookies("instagram")
 
-    async with httpx.AsyncClient(timeout=60) as client:
-        # Step 1: Create media container
-        container_url = f"{INSTAGRAM_GRAPH}/{ig_user_id}/media"
-        container_data = {
-            "video_url": file_path,
-            "media_type": "REELS",
-            "caption": caption,
-        }
-        resp = await client.post(container_url, params=params, json=container_data)
-        resp.raise_for_status()
-        container_id = resp.json()["id"]
-        log.info("Instagram container created: %s", container_id)
-
-        # Step 2: Check status until READY
-        for _ in range(30):
-            await asyncio.sleep(5)
-            status_url = f"{INSTAGRAM_GRAPH}/{container_id}"
-            resp = await client.get(status_url, params=params)
-            status = resp.json().get("status_code", "")
-            if status in ("FINISHED", "PUBLISHED", "PROCESSING_COMPLETE"):
-                break
-            if status == "ERROR":
-                raise RuntimeError(f"Instagram media processing error: {resp.json()}")
-
-        # Step 3: Publish
-        publish_url = f"{INSTAGRAM_GRAPH}/{ig_user_id}/media_publish"
-        publish_data = {"creation_id": container_id}
-        resp = await client.post(publish_url, params=params, json=publish_data)
-        resp.raise_for_status()
-        media_id = resp.json()["id"]
-        log.info("Instagram Reels published: media_id=%s", media_id)
-        return media_id
+    log.info("Instagram: publishing via browser (cookies=%s)", cookies_file)
+    result = await publish_instagram_browser(
+        video_path=video_path,
+        caption=caption,
+        cookies_file=cookies_file,
+    )
+    return result

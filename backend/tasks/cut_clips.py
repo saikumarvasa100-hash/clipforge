@@ -1,6 +1,6 @@
 """
 ClipForge -- Celery Task: Cut Clips
-Takes scored clips, runs FFmpeg pipeline, uploads to R2.
+Takes scored clips, runs FFmpeg pipeline, stores locally.
 """
 from __future__ import annotations
 
@@ -10,8 +10,6 @@ import logging
 import os
 from typing import List
 
-import boto3
-from botocore.config import Config
 
 from backend.celery_app import celery_app
 from backend.models.database import Clip, Video, SessionLocal, ClipStatus
@@ -29,31 +27,14 @@ from sqlalchemy import select
 
 log = logging.getLogger("clipforge.cut_clips")
 
-# ── R2 upload ────────────────────────────────────────────────────────
+# ── Local Storage ────────────────────────────────────────────────────
 
-def upload_to_r2(local_path: str, clip_id: str) -> str:
-    """Upload a processed clip to Cloudflare R2. Return the public CDN URL."""
-    bucket = os.getenv("CLOUDFLARE_R2_BUCKET_NAME", "clipforge")
-    account_id = os.getenv("CLOUDFLARE_R2_ACCOUNT_ID", "")
-    access_key = os.getenv("CLOUDFLARE_R2_ACCESS_KEY_ID", "")
-    secret_key = os.getenv("CLOUDFLARE_R2_SECRET_ACCESS_KEY", "")
-    public_url = os.getenv("CLOUDFLARE_R2_PUBLIC_URL", "")
-
-    s3 = boto3.client(
-        "s3",
-        endpoint_url=f"https://{account_id}.r2.cloudflarestorage.com",
-        aws_access_key_id=access_key,
-        aws_secret_access_key=secret_key,
-        config=Config(signature_version="s3v4"),
-    )
-
-    key = f"clips/{clip_id}.mp4"
-    with open(local_path, "rb") as f:
-        s3.upload_fileobj(f, bucket, key, ExtraArgs={"ContentType": "video/mp4"})
-
-    cdn_url = f"{public_url.rstrip('/')}/{key}"
-    log.info("Uploaded to R2: %s", cdn_url)
-    return cdn_url
+def upload_to_local(local_path: str, clip_id: str) -> str:
+    """Store a processed clip in the local filesystem. Return the file path."""
+    from backend.services.local_storage import upload_clip
+    stored_path = upload_clip(local_path, clip_id)
+    log.info("Stored clip locally: %s", stored_path)
+    return stored_path
 
 
 # ── FFmpeg Processing Pipeline ───────────────────────────────────────
@@ -102,7 +83,7 @@ def process_clip(clip_data: dict, audio_path: str) -> str:
 def cut_clips_for_video(self, video_id: str):
     """
     Load all pending clips for a video, process each through the
-    FFmpeg pipeline, upload to R2, and update DB.
+    FFmpeg pipeline, store locally, and update DB.
     """
     async def _run():
         async with SessionLocal() as db:
@@ -140,16 +121,16 @@ def cut_clips_for_video(self, video_id: str):
 
                     final_path = process_clip(clip_data, audio_path)
 
-                    # Upload to R2
-                    public_url = upload_to_r2(final_path, str(clip.id))
+                    # Store locally
+                    storage_path = upload_to_local(final_path, str(clip.id))
 
                     # Update clip record
                     clip.output_path = final_path
-                    clip.storage_url = public_url
+                    clip.storage_url = storage_path
                     clip.status = ClipStatus.READY
 
                     await db.commit()
-                    log.info("Clip %s ready: %s", clip.id, public_url)
+                    log.info("Clip %s ready: %s", clip.id, storage_path)
 
                     # Create publish jobs for each platform
                     from backend.models.database import PublishJob, PublishPlatform, PublishStatus

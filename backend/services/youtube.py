@@ -1,9 +1,11 @@
 """
 ClipForge -- YouTube Service
 Subscribe to PubSubHubbub, download videos, resolve channel info.
+All YouTube operations use yt-dlp (no YouTube Data API dependency).
 """
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
 import re
@@ -20,8 +22,6 @@ from backend.models.database import Channel, Video, SessionLocal
 log = logging.getLogger("clipforge.youtube")
 
 PUBSUB_SUBSCRIBE_URL = "https://pubsubhubbub.appspot.com/subscribe"
-YT_DATA_API = "https://www.googleapis.com/youtube/v3"
-
 
 # ── PubSubHubbub ─────────────────────────────────────────────────────
 
@@ -80,58 +80,143 @@ async def renew_expiring_subscriptions(db: AsyncSession) -> int:
     return renewed
 
 
+# ── Channel info ──────────────────────────────────────────────────────
+
+async def get_channel_info(channel_id: str) -> Dict:
+    """Return channel name, thumbnail URL, subscriber count using yt-dlp."""
+    channel_url = f"https://www.youtube.com/channel/{channel_id}"
+
+    # Grab channel name and thumbnail
+    name_thumb_cmd = [
+        "yt-dlp",
+        "--print", "%(channel)s|%(channel_id)s|%(thumbnail)s",
+        "--no-download",
+        "--skip-download",
+        channel_url,
+    ]
+
+    # Attempt to grab subscriber count (may be hidden or unavailable)
+    sub_cmd = [
+        "yt-dlp",
+        "--print", "%(channel_follower_count)s",
+        "--no-download",
+        "--skip-download",
+        channel_url,
+    ]
+
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            *name_thumb_cmd,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        stdout, stderr = await proc.communicate()
+
+        if proc.returncode != 0 or not stdout:
+            log.error(
+                "yt-dlp channel info failed: %s",
+                stderr.decode(errors="replace")[:300],
+            )
+            return {"error": "Failed to fetch channel info"}
+
+        output = stdout.decode(errors="replace").strip()
+        parts = output.split("|")
+
+        name = parts[0].strip() if len(parts) > 0 else ""
+        thumbnail = parts[2].strip() if len(parts) > 2 else ""
+
+        # Try subscriber count separately (often returns 'NA')
+        subscriber_count = "hidden"
+        try:
+            sub_proc = await asyncio.create_subprocess_exec(
+                *sub_cmd,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+            sub_stdout, _ = await sub_proc.communicate()
+            sub_raw = sub_stdout.decode(errors="replace").strip()
+            if sub_raw and sub_raw != "NA":
+                subscriber_count = int(sub_raw)
+        except (ValueError, Exception):
+            pass
+
+        if not name:
+            return {"error": "Channel not found or name unavailable"}
+
+        return {
+            "name": name,
+            "thumbnail": thumbnail,
+            "subscribers": subscriber_count,
+        }
+
+    except Exception:
+        log.exception("yt-dlp channel info error for %s", channel_id)
+        return {"error": "Failed to fetch channel info"}
+
+
 # ── Video fetching ────────────────────────────────────────────────────
 
 async def fetch_latest_video(channel_id: str) -> Optional[Dict]:
-    """Use YouTube Data API v3 to get the latest video for a channel."""
-    api_key = os.getenv("YOUTUBE_API_KEY", "")
-    if not api_key:
-        log.warning("YOUTUBE_API_KEY not set — skipping fetch_latest_video")
+    """Use yt-dlp to get the latest video from a channel."""
+    channel_url = f"https://www.youtube.com/channel/{channel_id}"
+
+    cmd = [
+        "yt-dlp",
+        "--flat-playlist",
+        "--print", "%(id)s|%(title)s|%(duration)s",
+        "--playlist-end", "1",
+        channel_url,
+    ]
+
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            *cmd,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        stdout, stderr = await proc.communicate()
+
+        if proc.returncode != 0:
+            log.warning(
+                "yt-dlp fetch_latest_video for %s: %s",
+                channel_id,
+                stderr.decode(errors="replace")[:300],
+            )
+            return None
+
+        line = stdout.decode(errors="replace").strip()
+        if not line:
+            return None
+
+        parts = line.split("|")
+        video_id = parts[0].strip() if len(parts) > 0 else ""
+        title = parts[1].strip() if len(parts) > 1 else ""
+        duration_raw = parts[2].strip() if len(parts) > 2 else "0"
+
+        if not video_id or video_id == "NA":
+            return None
+
+        # yt-dlp flat-playlist returns duration as an integer (seconds)
+        # or "NA" / "none" if unavailable
+        try:
+            duration_sec = int(duration_raw)
+        except (ValueError, TypeError):
+            duration_sec = 0
+
+        return {
+            "video_id": video_id,
+            "title": title,
+            "duration_seconds": duration_sec,
+            "url": f"https://www.youtube.com/watch?v={video_id}",
+        }
+
+    except Exception:
+        log.exception("yt-dlp fetch_latest_video error for %s", channel_id)
         return None
-
-    url = f"{YT_DATA_API}/search"
-    params = {
-        "part": "snippet,id",
-        "channelId": channel_id,
-        "order": "date",
-        "maxResults": 1,
-        "type": "video",
-        "key": api_key,
-    }
-
-    async with httpx.AsyncClient(timeout=30) as client:
-        resp = await client.get(url, params=params)
-        resp.raise_for_status()
-        data = resp.json()
-
-    items = data.get("items", [])
-    if not items:
-        return None
-
-    item = items[0]
-    video_id = item["id"]["videoId"]
-    snippet = item["snippet"]
-
-    # resolve duration
-    dur_url = f"{YT_DATA_API}/videos"
-    dur_params = {"part": "contentDetails", "id": video_id, "key": api_key}
-    dur_resp = await client.get(dur_url, params=dur_params)
-    dur_data = dur_resp.json()
-    duration_raw = dur_data["items"][0]["contentDetails"]["duration"]
-    duration_sec = _parse_iso8601_duration(duration_raw)
-
-    return {
-        "video_id": video_id,
-        "title": snippet["title"],
-        "duration_seconds": duration_sec,
-        "url": f"https://www.youtube.com/watch?v={video_id}",
-    }
 
 
 async def download_video_audio(youtube_url: str, output_path: str) -> str:
     """Download best audio from YouTube using yt-dlp."""
-    import subprocess
-
     os.makedirs(os.path.dirname(output_path) or ".", exist_ok=True)
 
     cmd = [
@@ -166,36 +251,6 @@ async def download_video_audio(youtube_url: str, output_path: str) -> str:
     raise FileNotFoundError(f"Expected output not found: {output_path}")
 
 
-# ── Channel info ──────────────────────────────────────────────────────
-
-async def get_channel_info(channel_id: str) -> Dict:
-    """Return channel name, thumbnail URL, subscriber count."""
-    api_key = os.getenv("YOUTUBE_API_KEY", "")
-    url = f"{YT_DATA_API}/channels"
-    params = {
-        "part": "snippet,statistics",
-        "id": channel_id,
-        "key": api_key,
-    }
-
-    async with httpx.AsyncClient(timeout=30) as client:
-        resp = await client.get(url, params=params)
-        resp.raise_for_status()
-        data = resp.json()
-
-    items = data.get("items", [])
-    if not items:
-        return {"error": "Channel not found"}
-
-    snippet = items[0]["snippet"]
-    stats = items[0]["statistics"]
-    return {
-        "name": snippet["title"],
-        "thumbnail": snippet["thumbnails"]["high"]["url"],
-        "subscribers": stats.get("subscriberCount", "hidden"),
-    }
-
-
 # ── Helpers ───────────────────────────────────────────────────────────
 
 def _callback_url() -> str:
@@ -212,7 +267,3 @@ def _parse_iso8601_duration(duration: str) -> float:
         return 0.0
     h, m, s = (int(g or 0) for g in match.groups())
     return h * 3600 + m * 60 + s
-
-
-# Import asyncio at top for the download function
-import asyncio

@@ -31,7 +31,7 @@ def re_render_clip(
 ):
     """
     Re-cut a clip with new trim times and recaption.
-    Uploads replacement to R2, updates clip record.
+    Stores replacement locally, updates clip record.
     """
     async def _run():
         async with SessionLocal() as db:
@@ -90,13 +90,13 @@ def re_render_clip(
             else:
                 styled_path = reformatted
 
-            # Step 4: Upload replacement to R2 (same key to overwrite)
-            from backend.tasks.cut_clips import upload_to_r2
-            public_url = upload_to_r2(styled_path, f"{clip_id}")
+            # Step 4: Store replacement locally
+            from backend.tasks.cut_clips import upload_to_local
+            storage_path = upload_to_local(styled_path, f"{clip_id}")
 
             # Step 5: Update clip record
             clip.output_path = styled_path
-            clip.storage_url = public_url
+            clip.storage_url = storage_path
             clip.status = ClipStatus.READY
 
             # Update caption style if column exists
@@ -108,6 +108,6 @@ def re_render_clip(
             await db.commit()
 
             log.info("Clip re-rendered: %s (style=%s, trim=%.1f-%.1f, url=%s)",
-                     clip_id, style_name, trim_start, trim_end, public_url)
+                     clip_id, style_name, trim_start, trim_end, storage_path)
 
     asyncio.run(_run())
