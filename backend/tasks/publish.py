@@ -19,6 +19,10 @@ from backend.services.publisher import (
     youtube_shorts_upload,
     instagram_reels_upload,
 )
+from backend.services.linkedin_facebook_publisher import (
+    linkedin_video_upload,
+    facebook_reels_upload,
+)
 from sqlalchemy import select
 
 log = logging.getLogger("clipforge.publish")
@@ -102,6 +106,34 @@ async def _publish_reels(clip, publish_job, db):
     return media_id
 
 
+async def _publish_linkedin(clip, publish_job, db):
+    """Publish to LinkedIn Video."""
+    from backend.services.linkedin_facebook_publisher import linkedin_video_upload
+    channel = await _get_channel_for_clip(db, clip)
+    if not channel or not channel.access_token:
+        raise ValueError("No LinkedIn access token available")
+    post_id = await linkedin_video_upload(
+        clip={"output_path": clip.output_path or "/tmp/fallback", "hook_text": clip.hook_text or ""},
+        access_token=channel.access_token,
+        person_urn=channel.youtube_channel_id,
+    )
+    return post_id
+
+
+async def _publish_facebook(clip, publish_job, db):
+    """Publish to Facebook Reels."""
+    from backend.services.linkedin_facebook_publisher import facebook_reels_upload
+    channel = await _get_channel_for_clip(db, clip)
+    if not channel or not channel.access_token:
+        raise ValueError("No Facebook page access token available")
+    post_id = await facebook_reels_upload(
+        clip={"output_path": clip.output_path or "/tmp/fallback", "hook_text": clip.hook_text or ""},
+        page_access_token=channel.access_token,
+        page_id=channel.youtube_channel_id or "",
+    )
+    return post_id
+
+
 # ── Celery Task ──────────────────────────────────────────────────────
 
 @celery_app.task(bind=True, max_retries=3, default_retry_delay=120)
@@ -146,6 +178,10 @@ def publish_clips(self):
                         platform_post_id = await _publish_shorts(clip, job, db)
                     elif job.platform in (PublishPlatform.INSTAGRAM, PublishPlatform.REELS):
                         platform_post_id = await _publish_reels(clip, job, db)
+                    elif job.platform == PublishPlatform.LINKEDIN:
+                        platform_post_id = await _publish_linkedin(clip, job, db)
+                    elif job.platform == PublishPlatform.FACEBOOK:
+                        platform_post_id = await _publish_facebook(clip, job, db)
                     else:
                         raise ValueError(f"Unknown platform: {job.platform}")
 

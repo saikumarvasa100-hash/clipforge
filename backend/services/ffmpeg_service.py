@@ -45,8 +45,31 @@ def cut_clip(input_path: str, start_time: float, end_time: float, output_path: s
     return output_path
 
 
-def reformat_to_9_16(input_path: str, output_path: str) -> str:
-    """Rescale + pad any resolution to 1080x1920 (9:16)."""
+def reformat_to_9_16(input_path: str, output_path: str, face_track: bool = False) -> str:
+    """
+    Rescale + pad any resolution to 1080x1920 (9:16).
+    If face_track=True, uses face-detection tracking instead.
+    """
+    if face_track:
+        try:
+            from backend.services.face_tracker import (
+                detect_faces_per_second,
+                compute_crop_trajectory,
+                generate_face_tracked_video,
+            )
+            import cv2
+            cap = cv2.VideoCapture(input_path)
+            w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+            h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+            cap.release()
+            faces = detect_faces_per_second(input_path)
+            if faces:
+                trajectory = compute_crop_trajectory(faces, w, h)
+                return generate_face_tracked_video(input_path, trajectory, output_path)
+            # Fallback below
+        except Exception:
+            pass  # Fall through to static crop
+
     os.makedirs(os.path.dirname(output_path) or ".", exist_ok=True)
     vf = (
         "scale=iw*min(1080/iw\\,1920/ih):ih*min(1080/iw\\,1920/ih),"

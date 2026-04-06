@@ -14,7 +14,11 @@ greenlet==3.1.1
 supabase==2.10.0
 
 # OpenAI
-openai==1.57.4
+openai>=1.0.0
+opencv-python-headless
+librosa
+scipy
+numpy
 
 # HTTP clients
 httpx==0.28.1

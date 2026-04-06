@@ -72,12 +72,13 @@ app.add_middleware(
 
 # ── Routers ──────────────────────────────────────────────────────────
 
-from backend.routers import channels, clips, jobs, webhooks
+from backend.routers import channels, clips, jobs, webhooks, analysis
 
 app.include_router(channels.router)
 app.include_router(clips.router)
 app.include_router(jobs.router)
 app.include_router(webhooks.router)
+app.include_router(analysis.router)
 
 # ── Health ───────────────────────────────────────────────────────────
 

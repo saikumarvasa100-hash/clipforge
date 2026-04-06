@@ -1,6 +1,6 @@
 """
-ClipForge -- Database Models (SQLAlchemy ORM)
-Supabase/PostgreSQL schema with 6 tables + indexes.
+ClipForge — Database Models (SQLAlchemy ORM)
+Supabase/PostgreSQL schema. 6 tables + indexes.
 """
 from __future__ import annotations
 import uuid
@@ -9,7 +9,7 @@ from enum import Enum as PyEnum
 
 from sqlalchemy import (
     Column, String, Float, Integer, Boolean, DateTime, Text, ForeignKey,
-    Enum as SAEnum, Index, func, JSON, create_engine
+    Enum as SAEnum, Index, func, JSON
 )
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker
@@ -17,7 +17,10 @@ from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import relationship
 import os
 
-DATABASE_URL = os.getenv("DATABASE_URL", "postgresql+asyncpg://clipforge:clipforge_local@localhost:5432/clipforge")
+DATABASE_URL = os.getenv(
+    "DATABASE_URL",
+    "postgresql+asyncpg://clipforge:clipforge_local@localhost:5432/clipforge"
+)
 
 engine = create_async_engine(DATABASE_URL, echo=False)
 SessionLocal = async_sessionmaker(bind=engine, expire_on_commit=False)
@@ -45,6 +48,15 @@ class PublishStatus(PyEnum):
     FAILED = "failed"
 
 
+class PublishPlatform(PyEnum):
+    TIKTOK = "tiktok"
+    SHORTS = "shorts"
+    INSTAGRAM = "instagram"
+    REELS = "reels"
+    LINKEDIN = "linkedin"
+    FACEBOOK = "facebook"
+
+
 class User(Base):
     __tablename__ = "users"
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
@@ -56,7 +68,10 @@ class User(Base):
     channels = relationship("Channel", back_populates="user", cascade="all, delete-orphan")
     clips = relationship("Clip", back_populates="user", cascade="all, delete-orphan")
     subscriptions = relationship("Subscription", back_populates="user", cascade="all, delete-orphan")
-    __table_args__ = (Index("ix_users_email", "email"), Index("ix_users_stripe", "stripe_customer_id"))
+    __table_args__ = (
+        Index("ix_users_email", "email"),
+        Index("ix_users_stripe", "stripe_customer_id"),
+    )
 
 
 class Channel(Base):
@@ -96,7 +111,11 @@ class Video(Base):
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     channel = relationship("Channel", back_populates="videos")
     clips = relationship("Clip", back_populates="video", cascade="all, delete-orphan")
-    __table_args__ = (Index("ix_videos_channel", "channel_id"), Index("ix_videos_yt", "youtube_video_id"), Index("ix_videos_status", "status"))
+    __table_args__ = (
+        Index("ix_videos_channel", "channel_id"),
+        Index("ix_videos_yt", "youtube_video_id"),
+        Index("ix_videos_status", "status"),
+    )
 
 
 class Clip(Base):
@@ -112,6 +131,7 @@ class Clip(Base):
     storage_url = Column(Text, nullable=True)
     caption_data = Column(JSON, nullable=True)
     virality_signals = Column(JSON, nullable=True)
+    caption_style = Column(String(30), nullable=True, default="classic")
     status = Column(String(20), nullable=False, default="pending")
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     video = relationship("Video", back_populates="clips")
@@ -119,7 +139,8 @@ class Clip(Base):
     publish_jobs = relationship("PublishJob", back_populates="clip", cascade="all, delete-orphan")
     __table_args__ = (
         Index("ix_clips_video", "video_id"), Index("ix_clips_user", "user_id"),
-        Index("ix_clips_hook", "hook_score"), Index("ix_clips_status", "status"), Index("ix_clips_created", "created_at"),
+        Index("ix_clips_hook", "hook_score"), Index("ix_clips_status", "status"),
+        Index("ix_clips_created", "created_at"),
     )
 
 
@@ -134,7 +155,10 @@ class PublishJob(Base):
     error_message = Column(Text, nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     clip = relationship("Clip", back_populates="publish_jobs")
-    __table_args__ = (Index("ix_pj_clip", "clip_id"), Index("ix_pj_status", "status"), Index("ix_pj_platform", "platform"))
+    __table_args__ = (
+        Index("ix_pj_clip", "clip_id"), Index("ix_pj_status", "status"),
+        Index("ix_pj_platform", "platform"),
+    )
 
 
 class Subscription(Base):
@@ -147,4 +171,6 @@ class Subscription(Base):
     current_period_end = Column(DateTime(timezone=True), nullable=False)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     user = relationship("User", back_populates="subscriptions")
-    __table_args__ = (Index("ix_sub_user", "user_id"), Index("ix_sub_stripe", "stripe_subscription_id"))
+    __table_args__ = (
+        Index("ix_sub_user", "user_id"), Index("ix_sub_stripe", "stripe_subscription_id"),
+    )
