@@ -1,0 +1,104 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ClipForge Dashboard</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:#0f0f0f;color:#e4e4e7}
+.sidebar{position:fixed;left:0;top:0;bottom:0;width:200px;background:#18181b;border-right:1px solid #27272a;padding:16px}
+.logo{font-size:20px;font-weight:bold;color:#a78bfa;margin-bottom:4px}
+.tagline{font-size:11px;color:#71717a;margin-bottom:24px}
+.nav-item{display:block;padding:8px 12px;color:#a1a1aa;text-decoration:none;font-size:14px;border-radius:6px;margin:2px 0}
+.nav-item:hover,.nav-item.active{background:#27272a;color:#e4e4e7}
+.main{margin-left:200px;padding:24px}
+header{margin-bottom:24px}
+h1{font-size:24px;font-weight:600;margin-bottom:8px}
+.stats{display:grid;grid-template-columns:repeat(3,1fr);gap:16px;margin-bottom:32px}
+.stat{background:#18181b;border:1px solid #27272a;border-radius:12px;padding:20px}
+.stat-label{font-size:13px;color:#71717a}
+.stat-value{font-size:28px;font-weight:bold;margin-top:4px}
+.section-title{font-size:18px;font-weight:600;margin-bottom:16px}
+.clip-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(250px,1fr));gap:16px}
+.clip-card{background:#18181b;border:1px solid #27272a;border-radius:12px;overflow:hidden}
+.thumb{height:180px;background:#27272a;display:flex;align-items:center;justify-content:center;color:#52525b;font-size:48px}
+.card-body{padding:12px}
+.hook-score{display:inline-block;padding:2px 8px;border-radius:9999px;font-size:12px;font-weight:600}
+.hook-score.high{background:#064e3b;color:#6ee7b7}
+.hook-score.mid{background:#713f12;color#fbbf24}
+.hook-score.low{background:#7f1d1d;color:#fca5a5}
+.hook-text{font-size:13px;margin-top:8px;color:#d4d4d8;line-height:1.4}
+.platforms{display:flex;gap:8px;margin-top:8px}
+.platform{font-size:11px;padding:2px 8px;background:#27272a;border-radius:4px;color:#a1a1aa}
+.empty{text-align:center;padding:80px;color:#52525b}
+</style>
+</head>
+<body>
+<div class="sidebar">
+<div class="logo">ClipForge</div>
+<div class="tagline">Turn videos into viral clips</div>
+<a href="/" class="nav-item active">Dashboard</a>
+<a href="/channels" class="nav-item">Channels</a>
+<a href="/clips" class="nav-item">Clips</a>
+<a href="/analytics" class="nav-item">Analytics</a>
+</div>
+<div class="main">
+<header><h1>Dashboard</h1></header>
+<div class="stats">
+<div class="stat"><div class="stat-label">Total Clips</div><div class="stat-value" id="totalClips">-</div></div>
+<div class="stat"><div class="stat-label">Published</div><div class="stat-value" id="published">-</div></div>
+<div class="stat"><div class="stat-label">Avg Score</div><div class="stat-value" id="avgScore">-</div></div>
+</div>
+<div id="status-msg" style="margin-bottom:16px;padding:12px;background:#18181b;border:1px solid #27272a;border-radius:8px">
+Loading clips...
+</div>
+<div class="clip-grid" id="clipGrid"></div>
+<div class="empty" id="empty" style="display:none"><p>No clips generated yet</p><p style="font-size:13px;margin-top:4px">Connect a channel and submit a video to get started.</p></div>
+</div>
+<script>
+async function loadClips(){
+try{
+const res = await fetch('/api/clips?page_size=20');
+if(!res.ok){throw new Error('Failed to fetch clips');}
+const data = await res.json();
+const clips = data.clips || [];
+document.getElementById('totalClips').textContent = data.total || 0;
+const published = clips.filter(c => c.status === 'published' || c.status === 'ready').length;
+document.getElementById('published').textContent = published;
+const avgScore = clips.length ? (clips.reduce((sum,c) => sum + (c.hook_score || 0), 0) / clips.length).toFixed(1) : '-';
+document.getElementById('avgScore').textContent = avgScore;
+const grid = document.getElementById('clipGrid');
+const empty = document.getElementById('empty');
+const status = document.getElementById('status-msg');
+if(clips.length === 0){
+grid.style.display = 'none';
+empty.style.display = 'block';
+status.innerHTML = 'No clips generated yet. <a href="#" onclick="document.getElementById(\"uploadForm\").style.display=\"block\"">Upload a video</a>';
+return;
+}
+status.innerHTML = 'Showing ' + clips.length + ' clips';
+grid.innerHTML = clips.map(c => {
+const scoreClass = (c.hook_score || 0) >= 7 ? 'high' : (c.hook_score || 0) >= 4 ? 'mid' : 'low';
+return '<div class="clip-card">'
++ '<div class="thumb">&#9654;</div>'
++ '<div class="card-body">'
++ '<span class="hook-score ' + scoreClass + '">' + (c.hook_score || 0).toFixed(1) + '/10</span>'
++ '<div class="hook-text">' + (c.hook_text || 'No hook text') + '</div>'
++ '<div class="platforms">'
++ '<span class="platform">TikTok</span>'
++ '<span class="platform">Shorts</span>'
++ '<span class="platform">Reels</span>'
++ '</div>'
++ '</div></div>';
+}).join('');
+}catch(e){
+console.error(e);
+document.getElementById('status-msg').innerHTML = 'Error loading clips: ' + e.message;
+}
+}
+loadClips();
+setInterval(loadClips, 60000);
+</script>
+</body>
+</html>

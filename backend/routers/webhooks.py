@@ -20,7 +20,7 @@ router = APIRouter(prefix="/api/webhooks", tags=["webhooks"])
 # ── YouTube PubSubHubbub ─────────────────────────────────────────────
 
 @router.get("/youtube")
-async def youtube_webhook_get(
+def youtube_webhook_get(
     hub_mode: Optional[str] = None,
     hub_topic: Optional[str] = None,
     hub_challenge: Optional[str] = None,
@@ -76,6 +76,6 @@ async def youtube_webhook_post(request: Request):
 # ── Health / Status ──────────────────────────────────────────────────
 
 @router.get("/health")
-async def health():
+def health():
     """Simple health check endpoint for uptime monitors."""
     return {"status": "ok", "service": "clipforge", "self_hosted": True}

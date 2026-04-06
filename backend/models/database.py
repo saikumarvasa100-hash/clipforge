@@ -1,30 +1,40 @@
 """
-ClipForge — Database Models (SQLAlchemy ORM)
-Supabase/PostgreSQL schema. 6 tables + indexes.
+ClipForge -- Database Models (SQLAlchemy ORM)
+Local SQLite, no cloud dependencies.
+Uses synchronous SQLAlchemy for SQLite (async has issues with aiosqlite).
 """
 from __future__ import annotations
 import uuid
 from datetime import datetime, timezone
 from enum import Enum as PyEnum
+import os
 
 from sqlalchemy import (
     Column, String, Float, Integer, Boolean, DateTime, Text, ForeignKey,
-    Enum as SAEnum, Index, func, JSON
+    Enum as SAEnum, Index, func, JSON, create_engine
 )
-from sqlalchemy.dialects.postgresql import UUID
-from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker
-from sqlalchemy.ext.declarative import declarative_base
-from sqlalchemy.orm import relationship
-import os
+from sqlalchemy.dialects.postgresql import UUID as PG_UUID
+from sqlalchemy.orm import declarative_base, relationship, sessionmaker
 
 DATABASE_URL = os.getenv(
     "DATABASE_URL",
-    "postgresql+asyncpg://clipforge:clipforge_local@localhost:5432/clipforge"
+    "sqlite:////home/saiku/clipforge/clipforge.db"
 )
 
-engine = create_async_engine(DATABASE_URL, echo=False)
-SessionLocal = async_sessionmaker(bind=engine, expire_on_commit=False)
+# Use sync engine for SQLite -- async aiosqlite is unreliable
+engine = create_engine(
+    DATABASE_URL,
+    echo=False,
+    connect_args={"check_same_thread": False},
+    pool_pre_ping=True,
+)
+SessionLocal = sessionmaker(bind=engine, expire_on_commit=False)
 Base = declarative_base()
+
+
+def init_db():
+    """Create all tables."""
+    Base.metadata.create_all(bind=engine)
 
 
 class VideoStatus(PyEnum):
@@ -59,7 +69,7 @@ class PublishPlatform(PyEnum):
 
 class User(Base):
     __tablename__ = "users"
-    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
     email = Column(String(255), unique=True, nullable=False, index=True)
     stripe_customer_id = Column(String(255), nullable=True, index=True)
     plan = Column(String(20), nullable=False, default="free")
@@ -76,8 +86,8 @@ class User(Base):
 
 class Channel(Base):
     __tablename__ = "channels"
-    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    user_id = Column(String(36), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
     youtube_channel_id = Column(String(255), nullable=False, index=True)
     channel_name = Column(String(255), nullable=True)
     channel_thumbnail = Column(Text, nullable=True)
@@ -99,8 +109,8 @@ class Channel(Base):
 
 class Video(Base):
     __tablename__ = "videos"
-    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    channel_id = Column(UUID(as_uuid=True), ForeignKey("channels.id", ondelete="CASCADE"), nullable=False, index=True)
+    id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    channel_id = Column(String(36), ForeignKey("channels.id", ondelete="CASCADE"), nullable=False, index=True)
     youtube_video_id = Column(String(255), nullable=False, index=True)
     title = Column(String(1000), nullable=True)
     duration_seconds = Column(Float, nullable=True)
@@ -120,9 +130,9 @@ class Video(Base):
 
 class Clip(Base):
     __tablename__ = "clips"
-    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    video_id = Column(UUID(as_uuid=True), ForeignKey("videos.id", ondelete="CASCADE"), nullable=False, index=True)
-    user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    video_id = Column(String(36), ForeignKey("videos.id", ondelete="CASCADE"), nullable=False, index=True)
+    user_id = Column(String(36), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
     start_time = Column(Float, nullable=False)
     end_time = Column(Float, nullable=False)
     hook_score = Column(Float, nullable=True)
@@ -146,8 +156,8 @@ class Clip(Base):
 
 class PublishJob(Base):
     __tablename__ = "publish_jobs"
-    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    clip_id = Column(UUID(as_uuid=True), ForeignKey("clips.id", ondelete="CASCADE"), nullable=False, index=True)
+    id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    clip_id = Column(String(36), ForeignKey("clips.id", ondelete="CASCADE"), nullable=False, index=True)
     platform = Column(String(20), nullable=False)
     status = Column(String(20), nullable=False, default="queued")
     platform_post_id = Column(String(255), nullable=True)
@@ -163,8 +173,8 @@ class PublishJob(Base):
 
 class Subscription(Base):
     __tablename__ = "subscriptions"
-    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    user_id = Column(String(36), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
     stripe_subscription_id = Column(String(255), nullable=False, unique=True)
     plan = Column(String(20), nullable=False)
     status = Column(String(20), nullable=False, default="active")
@@ -174,3 +184,11 @@ class Subscription(Base):
     __table_args__ = (
         Index("ix_sub_user", "user_id"), Index("ix_sub_stripe", "stripe_subscription_id"),
     )
+
+
+# Create tables immediately on module import
+try:
+    init_db()
+except Exception as e:
+    # Tables may already exist -- that is fine
+    pass

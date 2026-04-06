@@ -12,7 +12,7 @@ from typing import List, Dict, Any, Optional
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 from sqlalchemy import func, select
-from sqlalchemy.ext.asyncio import AsyncSession
+
 
 from backend.models.database import Clip, PublishJob, Video, SessionLocal
 from backend.models.schemas import ClipListResponse, ClipResponse
@@ -22,9 +22,12 @@ log = logging.getLogger("clipforge.clips_router")
 router = APIRouter(prefix="/api/clips", tags=["clips"])
 
 
-async def get_db() -> AsyncSession:
-    async with SessionLocal() as db:
+def get_db():
+    db = SessionLocal()
+    try:
         yield db
+    finally:
+        db.close()
 
 
 class ClipEditRequest(BaseModel):
@@ -39,7 +42,7 @@ class ReCaptionRequest(BaseModel):
 
 
 @router.get("", response_model=ClipListResponse)
-async def list_clips(
+def list_clips(
     channel_id: Optional[str] = Query(None),
     status: Optional[str] = Query(None),
     date_from: Optional[datetime] = Query(None),
@@ -61,9 +64,9 @@ async def list_clips(
         query = query.where(Clip.created_at <= date_to)
         count_query = count_query.where(Clip.created_at <= date_to)
 
-    total = (await db.execute(count_query)).scalar() or 0
+    total = (db.execute(count_query)).scalar() or 0
     query = query.order_by(Clip.created_at.desc()).offset((page - 1) * page_size).limit(page_size)
-    result = await db.execute(query)
+    result = db.execute(query)
     clips = result.scalars().all()
 
     return ClipListResponse(
@@ -75,9 +78,9 @@ async def list_clips(
 
 
 @router.get("/{clip_id}", response_model=ClipResponse)
-async def get_clip(clip_id: str, db: AsyncSession = Depends(get_db)):
+def get_clip(clip_id: str, db = Depends(get_db)):
     stmt = select(Clip).where(Clip.id == clip_id)
-    result = await db.execute(stmt)
+    result = db.execute(stmt)
     clip = result.scalar_one_or_none()
     if not clip:
         raise HTTPException(status_code=404, detail="Clip not found")
@@ -85,12 +88,12 @@ async def get_clip(clip_id: str, db: AsyncSession = Depends(get_db)):
 
 
 @router.get("/{clip_id}/download")
-async def download_clip(clip_id: str, db: AsyncSession = Depends(get_db)):
+def download_clip(clip_id: str, db = Depends(get_db)):
     from fastapi.responses import FileResponse
     import os
 
     stmt = select(Clip).where(Clip.id == clip_id)
-    result = await db.execute(stmt)
+    result = db.execute(stmt)
     clip = result.scalar_one_or_none()
     if not clip or not clip.storage_url:
         raise HTTPException(status_code=404, detail="Clip or storage URL not found")
@@ -118,31 +121,31 @@ async def download_clip(clip_id: str, db: AsyncSession = Depends(get_db)):
 
 
 @router.delete("/{clip_id}", status_code=204)
-async def delete_clip(clip_id: str, db: AsyncSession = Depends(get_db)):
+def delete_clip(clip_id: str, db = Depends(get_db)):
     stmt = select(Clip).where(Clip.id == clip_id)
-    result = await db.execute(stmt)
+    result = db.execute(stmt)
     clip = result.scalar_one_or_none()
     if not clip:
         raise HTTPException(status_code=404, detail="Clip not found")
     pj_stmt = select(PublishJob).where(PublishJob.clip_id == clip_id)
-    pj_result = await db.execute(pj_stmt)
+    pj_result = db.execute(pj_stmt)
     for pj in pj_result.scalars().all():
-        await db.delete(pj)
-    await db.delete(clip)
-    await db.commit()
+        db.delete(pj)
+    db.delete(clip)
+    db.commit()
     log.info("Clip deleted: %s", clip_id)
 
 
 @router.post("/{clip_id}/edit", status_code=202)
-async def edit_clip(
-    clip_id: str, data: ClipEditRequest, db: AsyncSession = Depends(get_db)
+def edit_clip(
+    clip_id: str, data: ClipEditRequest, db = Depends(get_db)
 ):
     """
     Re-render a clip with new trim times, edited captions, and/or new style.
     Enqueues a Celery re_render_clip task.
     """
     stmt = select(Clip).where(Clip.id == clip_id)
-    result = await db.execute(stmt)
+    result = db.execute(stmt)
     clip = result.scalar_one_or_none()
     if not clip:
         raise HTTPException(status_code=404, detail="Clip not found")
@@ -166,8 +169,8 @@ async def edit_clip(
 
 
 @router.post("/{clip_id}/re-caption", status_code=200)
-async def re_caption_clip(
-    clip_id: str, data: ReCaptionRequest, db: AsyncSession = Depends(get_db)
+def re_caption_clip(
+    clip_id: str, data: ReCaptionRequest, db = Depends(get_db)
 ):
     """
     Re-burn captions with a different style, keeping existing trim.
@@ -186,13 +189,13 @@ async def re_caption_clip(
 
 @router.post("/{clip_id}/hashtags", status_code=200)
 async def generate_clip_hashtags(
-    clip_id: str, platform: str = "tiktok", db: AsyncSession = Depends(get_db)
+    clip_id: str, platform: str = "tiktok", db = Depends(get_db)
 ):
     """Generate AI-powered hashtags for a clip on a specific platform."""
     from backend.services.hashtag_service import generate_hashtags
 
     stmt = select(Clip).where(Clip.id == clip_id)
-    result = await db.execute(stmt)
+    result = db.execute(stmt)
     clip = result.scalar_one_or_none()
     if not clip:
         raise HTTPException(status_code=404, detail="Clip not found")
@@ -208,6 +211,6 @@ async def generate_clip_hashtags(
     if clip.virality_signals is None:
         clip.virality_signals = {}
     clip.virality_signals["hashtags"] = hashtags
-    await db.commit()
+    db.commit()
 
     return hashtags

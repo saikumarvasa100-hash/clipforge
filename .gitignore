@@ -1,0 +1,14 @@
+__pycache__/
+*.pyc
+*.db
+*.db-wal
+*.db-shm
+*.log
+node_modules/
+.next/
+storage/clips/
+.env
+.venv/
+frontend/next.config.js
+frontend/tsconfig.json
+frontend/frontend.log

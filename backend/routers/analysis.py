@@ -10,7 +10,7 @@ from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import select, func, text
-from sqlalchemy.ext.asyncio import AsyncSession
+
 
 from backend.models.database import Clip, Video, Channel, SessionLocal
 
@@ -19,19 +19,22 @@ log = logging.getLogger("clipforge.analysis_router")
 router = APIRouter(prefix="/api/analysis", tags=["analysis"])
 
 
-async def get_db() -> AsyncSession:
-    async with SessionLocal() as db:
+def get_db():
+    db = SessionLocal()
+    try:
         yield db
+    finally:
+        db.close()
 
 
 @router.get("/clip/{clip_id}")
-async def get_clip_analysis(clip_id: str, db: AsyncSession = Depends(get_db)):
+def get_clip_analysis(clip_id: str, db = Depends(get_db)):
     """
     Full signal breakdown for a clip.
     Returns virality_signals with all scoring detail.
     """
     stmt = select(Clip).where(Clip.id == clip_id)
-    result = await db.execute(stmt)
+    result = db.execute(stmt)
     clip = result.scalar_one_or_none()
     if not clip:
         raise HTTPException(status_code=404, detail="Clip not found")
@@ -65,7 +68,7 @@ async def get_clip_analysis(clip_id: str, db: AsyncSession = Depends(get_db)):
 
 
 @router.get("/channel/{channel_id}/insights")
-async def get_channel_insights(
+def get_channel_insights(
     channel_id: str,
     days: int = 30,
     db: AsyncSession = Depends(get_db),
@@ -77,7 +80,7 @@ async def get_channel_insights(
 
     # Get all clips for this channel's videos
     video_ids_stmt = select(Video.id).where(Video.channel_id == channel_id)
-    video_ids_result = await db.execute(video_ids_stmt)
+    video_ids_result = db.execute(video_ids_stmt)
     video_ids = [str(v) for v in video_ids_result.scalars().all()]
 
     if not video_ids:
@@ -89,7 +92,7 @@ async def get_channel_insights(
         .where(Clip.video_id.in_(video_ids), Clip.created_at >= since)
         .order_by(Clip.created_at.desc())
     )
-    clips_result = await db.execute(clips_stmt)
+    clips_result = db.execute(clips_stmt)
     clips = clips_result.scalars().all()
 
     if not clips:

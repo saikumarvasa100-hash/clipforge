@@ -9,12 +9,30 @@ from celery import Celery
 
 # ── Configuration ─────────────────────────────────────────────────────
 
-REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379/0")
+# Redis or local filesystem fallback (no external deps needed)
+REDIS_URL = os.getenv("REDIS_URL", "")
+if REDIS_URL:
+    broker = REDIS_URL
+    backend_broker = REDIS_URL
+else:
+    # No redis-server? Use memory broker (tasks run in-process)
+    # OR use filesystem as last resort
+    try:
+        import redis
+        r = redis.Redis()
+        r.ping()
+        broker = REDIS_URL or "redis://localhost:6379/0"
+        backend_broker = broker
+        print("Redis available, using redis broker")
+    except:
+        # No redis, use memory broker (tasks inline)
+        broker = "memory://"
+        backend_broker = "cache+"
 
 celery_app = Celery(
     "clipforge",
-    broker=REDIS_URL,
-    backend=REDIS_URL,
+    broker=broker,
+    backend=backend_broker,
 )
 
 # ── Celery Settings ───────────────────────────────────────────────────

@@ -1,97 +1,78 @@
 """
-ClipForge -- FastAPI Application Entry Point
+ClipForge -- FastAPI Application Entry Point (Self-Hosted)
 """
 from __future__ import annotations
-
 import logging
+import os
 from contextlib import asynccontextmanager
 from typing import AsyncGenerator
 
-from fastapi import FastAPI, Request, Depends
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
-from sqlalchemy import text
-
-from backend.celery_app import celery_app
-from backend.models.database import SessionLocal
+from fastapi.responses import JSONResponse, FileResponse
 
 log = logging.getLogger("clipforge.main")
 
 
-async def get_db():
-    """Async database session dependency."""
-    async with SessionLocal() as db:
-        try:
-            yield db
-            await db.commit()
-        except Exception:
-            await db.rollback()
-            raise
-
-
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncGenerator:
-    """Connect to Supabase and start Redis on startup."""
-    # Redis ping check
+    from backend.models.database import init_db
     try:
-        celery_app
-        log.info("Celery app initialised")
-    except Exception:
-        log.exception("Failed to initialise Celery")
-
-    # DB connection check
-    try:
-        async with SessionLocal() as db:
-            await db.execute(text("SELECT 1"))
-        log.info("Database connection OK")
-    except Exception:
-        log.exception("Database connection FAILED")
-
-    log.info("ClipForge API started")
+        init_db()
+        log.info("Database tables created/verified")
+    except Exception as e:
+        log.warning("DB check: %s", e)
+    log.info("ClipForge API started -- 100%% self-hosted, zero paid APIs")
     yield
-    log.info("ClipForge API shutting down")
+    log.info("ClipForge shutting down")
 
 
-# ── Application ──────────────────────────────────────────────────────
-
-app = FastAPI(
-    title="ClipForge API",
-    version="1.0.0",
-    lifespan=lifespan,
-)
-
-# ── CORS ─────────────────────────────────────────────────────────────
+app = FastAPI(title="ClipForge API", version="1.0.0", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000", "http://localhost:8765"],
-    allow_credentials=True,
+    allow_origins=["*"],
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-# ── Routers ──────────────────────────────────────────────────────────
-
+# Routers
 from backend.routers import channels, clips, jobs, webhooks, analysis
-
 app.include_router(channels.router)
 app.include_router(clips.router)
 app.include_router(jobs.router)
 app.include_router(webhooks.router)
 app.include_router(analysis.router)
 
-# ── Health ───────────────────────────────────────────────────────────
+# Frontend -- static SPA dashboard
+FRONTEND_STATIC = "/home/saiku/clipforge/frontend_static"
+os.makedirs(FRONTEND_STATIC, exist_ok=True)
+
+@app.get("/")
+async def index():
+    return FileResponse(os.path.join(FRONTEND_STATIC, "dashboard.html"))
+
+@app.get("/dashboard")
+async def dashboard_page():
+    return FileResponse(os.path.join(FRONTEND_STATIC, "dashboard.html"))
+
+@app.get("/channels")
+async def channels_page():
+    return FileResponse(os.path.join(FRONTEND_STATIC, "dashboard.html"))
+
+@app.get("/clips")
+async def clips_page():
+    return FileResponse(os.path.join(FRONTEND_STATIC, "dashboard.html"))
+
+@app.get("/analytics")
+async def analytics_page():
+    return FileResponse(os.path.join(FRONTEND_STATIC, "dashboard.html"))
 
 @app.get("/health")
 async def health():
-    return {"status": "ok", "version": "1.0.0"}
-
-# ── Global exception handler ──────────────────────────────────────────
+    return {"status": "ok", "version": "1.0.0", "self_hosted": True}
 
 @app.exception_handler(Exception)
 async def global_exception_handler(request: Request, exc: Exception):
     log.exception("Unhandled exception: %s", exc)
-    return JSONResponse(
-        status_code=500,
-        content={"detail": "Internal server error", "code": "INTERNAL_ERROR"},
-    )
+    return JSONResponse(status_code=500, content={"detail": str(exc)})
